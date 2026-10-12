@@ -1,0 +1,20 @@
+name: Lint
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up PDM
+        uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: "3.10"
+      - name: Install lint dependencies
+        run: pdm sync --group lint --no-default --no-self
+      - name: Check lint and formatting
+        run: pdm run lint

@@ -55,3 +55,28 @@ async def main():
 if __name__ == '__main__':
     asyncio.run(main())
 ```
+
+## Development
+
+Install the development dependencies with [PDM](https://pdm-project.org/):
+
+```shell
+pdm install
+```
+
+Run lint and formatting checks:
+
+```shell
+pdm run lint
+```
+
+Apply automatic lint fixes and format the code:
+
+```shell
+pdm run lint-fix
+```
+
+[Ruff](https://docs.astral.sh/ruff/) checks Python errors, imports, common bug
+patterns, and Python 3.8-compatible modernization, and enforces consistent
+formatting. CI runs the same checks on pushes and pull requests. The generated
+`pulsar_asyncio/version.py` file is excluded.

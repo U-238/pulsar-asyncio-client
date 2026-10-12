@@ -1,22 +1,34 @@
 import asyncio
-from typing import Union, Any
 from functools import partial
-import pulsar
-import _pulsar
-from _pulsar import CompressionType, PartitionsRoutingMode, BatchingType, ProducerConfiguration, \
-    ProducerAccessMode,  DeadLetterPolicyBuilder  # noqa: F401
+from typing import Any, Union
 
-__all__ = ['Client', 'Producer', 'PulsarException']
+import _pulsar
+import pulsar
+from _pulsar import (
+    BatchingType,
+    CompressionType,
+    PartitionsRoutingMode,
+    ProducerAccessMode,
+    ProducerConfiguration,
+)
+
+__all__ = ["Client", "Producer", "PulsarException"]
+
 
 def _check_type(var_type, var, name):
     if not isinstance(var, var_type):
-        raise ValueError("Argument %s is expected to be of type '%s' and not '%s'"
-                         % (name, var_type.__name__, type(var).__name__))
+        raise ValueError(
+            f"Argument {name} is expected to be of type '{var_type.__name__}' "
+            f"and not '{type(var).__name__}'"
+        )
+
 
 def _check_type_or_none(var_type, var, name):
     if var is not None and not isinstance(var, var_type):
-        raise ValueError("Argument %s is expected to be either None or of type '%s'"
-                         % (name, var_type.__name__))
+        raise ValueError(
+            f"Argument {name} is expected to be either None or of type '{var_type.__name__}'"
+        )
+
 
 def _set_future(fut: asyncio.Future, result: _pulsar.Result, value: Any):
     if result == _pulsar.Result.Ok:
@@ -24,8 +36,10 @@ def _set_future(fut: asyncio.Future, result: _pulsar.Result, value: Any):
     else:
         fut.set_exception(PulsarException(result))
 
+
 def _set_future_threadsafe(fut: asyncio.Future, result: _pulsar.Result, value: Any):
     fut.get_loop().call_soon_threadsafe(_set_future, fut, result, value)
+
 
 def _message_listener(loop, message_listener_coro, consumer, message):
     # Pulsar invokes this callback from its internal (C++) thread, not the asyncio
@@ -69,7 +83,7 @@ class PulsarException(BaseException):
         """
         Convert the exception to string.
         """
-        return f'{self._result.value} {self._result.name}'
+        return f"{self._result.value} {self._result.name}"
 
 
 class Producer:
@@ -257,28 +271,30 @@ class Client(pulsar.Client):
             _listener = None
         return super().subscribe(*args, message_listener=_listener, **kwargs)
 
-    async def create_producer(self, topic,
-                        producer_name=None,
-                        schema=pulsar.schema.BytesSchema(),
-                        initial_sequence_id=None,
-                        send_timeout_millis=30000,
-                        compression_type: CompressionType = CompressionType.NONE,
-                        max_pending_messages=1000,
-                        max_pending_messages_across_partitions=50000,
-                        block_if_queue_full=False,
-                        batching_enabled=False,
-                        batching_max_messages=1000,
-                        batching_max_allowed_size_in_bytes=128*1024,
-                        batching_max_publish_delay_ms=10,
-                        chunking_enabled=False,
-                        message_routing_mode: PartitionsRoutingMode = PartitionsRoutingMode.RoundRobinDistribution,
-                        lazy_start_partitioned_producers=False,
-                        properties=None,
-                        batching_type: BatchingType = BatchingType.Default,
-                        encryption_key=None,
-                        crypto_key_reader: Union[None, pulsar.CryptoKeyReader] = None,
-                        access_mode: ProducerAccessMode = ProducerAccessMode.Shared,
-                        ):
+    async def create_producer(
+        self,
+        topic,
+        producer_name=None,
+        schema=pulsar.schema.BytesSchema(),
+        initial_sequence_id=None,
+        send_timeout_millis=30000,
+        compression_type: CompressionType = CompressionType.NONE,
+        max_pending_messages=1000,
+        max_pending_messages_across_partitions=50000,
+        block_if_queue_full=False,
+        batching_enabled=False,
+        batching_max_messages=1000,
+        batching_max_allowed_size_in_bytes=128 * 1024,
+        batching_max_publish_delay_ms=10,
+        chunking_enabled=False,
+        message_routing_mode: PartitionsRoutingMode = PartitionsRoutingMode.RoundRobinDistribution,
+        lazy_start_partitioned_producers=False,
+        properties=None,
+        batching_type: BatchingType = BatchingType.Default,
+        encryption_key=None,
+        crypto_key_reader: Union[None, pulsar.CryptoKeyReader] = None,
+        access_mode: ProducerAccessMode = ProducerAccessMode.Shared,
+    ):
         """
         Asynchronously create a new producer on a given topic.
 
@@ -394,32 +410,46 @@ class Client(pulsar.Client):
             * ExclusiveWithFencing: Acquire exclusive access for the producer.
                                     Any existing producer will be removed and invalidated immediately.
         """
-        _check_type(str, topic, 'topic')
-        _check_type_or_none(str, producer_name, 'producer_name')
-        _check_type(pulsar.schema.Schema, schema, 'schema')
-        _check_type_or_none(int, initial_sequence_id, 'initial_sequence_id')
-        _check_type(int, send_timeout_millis, 'send_timeout_millis')
-        _check_type(CompressionType, compression_type, 'compression_type')
-        _check_type(int, max_pending_messages, 'max_pending_messages')
-        _check_type(int, max_pending_messages_across_partitions, 'max_pending_messages_across_partitions')
-        _check_type(bool, block_if_queue_full, 'block_if_queue_full')
-        _check_type(bool, batching_enabled, 'batching_enabled')
-        _check_type(int, batching_max_messages, 'batching_max_messages')
-        _check_type(int, batching_max_allowed_size_in_bytes, 'batching_max_allowed_size_in_bytes')
-        _check_type(int, batching_max_publish_delay_ms, 'batching_max_publish_delay_ms')
-        _check_type(bool, chunking_enabled, 'chunking_enabled')
-        _check_type_or_none(dict, properties, 'properties')
-        _check_type(BatchingType, batching_type, 'batching_type')
-        _check_type_or_none(str, encryption_key, 'encryption_key')
-        _check_type_or_none(pulsar.CryptoKeyReader, crypto_key_reader, 'crypto_key_reader')
-        _check_type(bool, lazy_start_partitioned_producers, 'lazy_start_partitioned_producers')
-        _check_type(ProducerAccessMode, access_mode, 'access_mode')
+        _check_type(str, topic, "topic")
+        _check_type_or_none(str, producer_name, "producer_name")
+        _check_type(pulsar.schema.Schema, schema, "schema")
+        _check_type_or_none(int, initial_sequence_id, "initial_sequence_id")
+        _check_type(int, send_timeout_millis, "send_timeout_millis")
+        _check_type(CompressionType, compression_type, "compression_type")
+        _check_type(int, max_pending_messages, "max_pending_messages")
+        _check_type(
+            int,
+            max_pending_messages_across_partitions,
+            "max_pending_messages_across_partitions",
+        )
+        _check_type(bool, block_if_queue_full, "block_if_queue_full")
+        _check_type(bool, batching_enabled, "batching_enabled")
+        _check_type(int, batching_max_messages, "batching_max_messages")
+        _check_type(
+            int,
+            batching_max_allowed_size_in_bytes,
+            "batching_max_allowed_size_in_bytes",
+        )
+        _check_type(int, batching_max_publish_delay_ms, "batching_max_publish_delay_ms")
+        _check_type(bool, chunking_enabled, "chunking_enabled")
+        _check_type_or_none(dict, properties, "properties")
+        _check_type(BatchingType, batching_type, "batching_type")
+        _check_type_or_none(str, encryption_key, "encryption_key")
+        _check_type_or_none(
+            pulsar.CryptoKeyReader, crypto_key_reader, "crypto_key_reader"
+        )
+        _check_type(
+            bool, lazy_start_partitioned_producers, "lazy_start_partitioned_producers"
+        )
+        _check_type(ProducerAccessMode, access_mode, "access_mode")
 
         conf = ProducerConfiguration()
         conf.send_timeout_millis(send_timeout_millis)
         conf.compression_type(compression_type)
         conf.max_pending_messages(max_pending_messages)
-        conf.max_pending_messages_across_partitions(max_pending_messages_across_partitions)
+        conf.max_pending_messages_across_partitions(
+            max_pending_messages_across_partitions
+        )
         conf.block_if_queue_full(block_if_queue_full)
         conf.batching_enabled(batching_enabled)
         conf.batching_max_messages(batching_max_messages)
@@ -445,10 +475,14 @@ class Client(pulsar.Client):
             conf.crypto_key_reader(crypto_key_reader.cryptoKeyReader)
 
         if batching_enabled and chunking_enabled:
-            raise ValueError("Batching and chunking of messages can't be enabled together.")
+            raise ValueError(
+                "Batching and chunking of messages can't be enabled together."
+            )
 
         fut = asyncio.get_running_loop().create_future()
-        self._client.create_producer_async(topic, conf, partial(_set_future_threadsafe, fut))
+        self._client.create_producer_async(
+            topic, conf, partial(_set_future_threadsafe, fut)
+        )
         return Producer(await fut)
 
     async def close(self) -> None:
