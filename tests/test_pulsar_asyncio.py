@@ -1,114 +1,77 @@
+"""Test coroutine listeners with real upstream clients and a Pulsar broker."""
+
 import asyncio
-import logging
-import sys
-import time
+import threading
+from uuid import uuid4
 
 import pulsar
 import pytest
+from pulsar.asyncio import Client as AsyncClient
 
-import pulsar_asyncio
+from pulsar_asyncio import coroutine_listener
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("tests.test_pulsar_asyncio")
+pytestmark = pytest.mark.integration
 
 
-class PulsarTestContext:
-    TEST_URL = "pulsar://localhost:6650"
-    TEST_TOPIC = "non-persistent://public/default/test-topic"
-    TEST_SUBSCRIPTION = "test-sub"
+@pytest.mark.parametrize("publisher_kind", ["sync", "async"])
+def test_coroutine_listener_with_upstream_producers(publisher_kind):
+    async def run():
+        topic = f"persistent://public/default/coroutine-listener-{uuid4().hex}"
+        subscriber = pulsar.Client("pulsar://localhost:6650")
+        publisher = (
+            pulsar.Client("pulsar://localhost:6650")
+            if publisher_kind == "sync"
+            else AsyncClient("pulsar://localhost:6650")
+        )
+        consumer = None
+        completed = asyncio.Event()
+        received = []
+        loop_thread = threading.get_ident()
 
-    _client = None
-    _consumer = None
-    _producer = None
+        async def listener(consumer, message):
+            assert threading.get_ident() == loop_thread
+            await asyncio.sleep(0.01)
+            consumer.acknowledge(message)
+            received.append((message.value(), message.properties()))
+            if len(received) == 5:
+                completed.set()
 
-    def __init__(self, pulsar_client_class):
-        if not issubclass(pulsar_client_class, pulsar.Client):
-            raise ValueError("pulsar_client_class must be a subclass of pulsar.Client")
-        self._pulsar_client_class = pulsar_client_class
-
-    @property
-    def client(self):
-        if not self._client:
-            self._client = self._pulsar_client_class(self.TEST_URL, logger=logger)
-        return self._client
-
-    def get_test_producer_sync(self):
-        if not self._producer:
-            self._producer = self.client.create_producer(self.TEST_TOPIC)
-        return self._producer
-
-    async def get_test_producer_async(self):
-        if not self._producer:
-            self._producer = await self.client.create_producer(self.TEST_TOPIC)
-        return self._producer
-
-    def start_test_consumer(self, message_listener):
-        if not self._consumer:
-            self._consumer = self.client.subscribe(
-                self.TEST_TOPIC,
-                subscription_name=self.TEST_SUBSCRIPTION,
-                message_listener=message_listener,
+        try:
+            consumer = await asyncio.to_thread(
+                subscriber.subscribe,
+                topic,
+                "listener-test",
+                schema=pulsar.schema.StringSchema(),
+                message_listener=coroutine_listener(listener),
+                crypto_failure_action=pulsar.ConsumerCryptoFailureAction.FAIL,
             )
-        else:
-            raise RuntimeError("Consumer already started")
+            if publisher_kind == "sync":
+                producer = await asyncio.to_thread(
+                    publisher.create_producer,
+                    topic,
+                    schema=pulsar.schema.StringSchema(),
+                )
+                for i in range(5):
+                    await asyncio.to_thread(
+                        producer.send, f"message-{i}", properties={"test": "listener"}
+                    )
+            else:
+                producer = await publisher.create_producer(
+                    topic, schema=pulsar.schema.StringSchema()
+                )
+                for i in range(5):
+                    await producer.send(f"message-{i}", properties={"test": "listener"})
+            await asyncio.wait_for(completed.wait(), 10)
+            assert sorted(received) == [
+                (f"message-{i}", {"test": "listener"}) for i in range(5)
+            ]
+        finally:
+            if consumer is not None:
+                await asyncio.to_thread(consumer.unsubscribe)
+            await asyncio.to_thread(subscriber.close)
+            if publisher_kind == "sync":
+                await asyncio.to_thread(publisher.close)
+            else:
+                await publisher.close()
 
-    def stop_test_consumer(self):
-        if self._consumer:
-            self._consumer.close()
-            self._consumer = None
-
-    def close(self):
-        if self._client:
-            self._client.close()
-            self._client = None
-
-    async def close_async(self):
-        if self._client:
-            await self._client.close()
-            self._client = None
-
-
-def handle_message_sync(consumer, message):
-    msg = message.data().decode("utf-8")
-    logger.info(f"Started synchronously handling message: {msg}")
-    time.sleep(0.1)
-    logger.info(f"Finished synchronously handling message: {msg}")
-    consumer.acknowledge(message)
-
-
-def test_sync():
-    pulsar_ctx = PulsarTestContext(pulsar.Client)
-    pulsar_ctx.start_test_consumer(handle_message_sync)
-    producer = pulsar_ctx.get_test_producer_sync()
-    for i in range(10):
-        producer.send(f"Test Message {i}".encode())
-    time.sleep(1.5)
-    pulsar_ctx.stop_test_consumer()
-    pulsar_ctx.close()
-
-
-async def handle_message_async(consumer, message):
-    msg = message.data().decode("utf-8")
-    logger.info(f"Started asynchronously handling message: {msg}")
-    await asyncio.sleep(0.1)
-    logger.info(f"Finished asynchronously handling message: {msg}")
-    consumer.acknowledge(message)
-
-
-async def _test_async():
-    pulsar_ctx = PulsarTestContext(pulsar_asyncio.Client)
-    pulsar_ctx.start_test_consumer(handle_message_async)
-    producer = await pulsar_ctx.get_test_producer_async()
-    for i in range(10):
-        await producer.send(f"Test Message {i}".encode())
-    await asyncio.sleep(1.5)
-    pulsar_ctx.stop_test_consumer()
-    await pulsar_ctx.close_async()
-
-
-def test_async():
-    asyncio.run(_test_async())
-
-
-if __name__ == "__main__":
-    sys.exit(pytest.main())
+    asyncio.run(run())

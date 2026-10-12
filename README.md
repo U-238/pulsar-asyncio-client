@@ -1,82 +1,112 @@
 # Pulsar AsyncIO Client
 
-Wrapper for `pulsar-client` that publishes messages asynchronously and handles consumed messages in an `asyncio` event loop.
+A coroutine-listener adapter for the Apache Pulsar Python client. Producers,
+consumers, readers, configuration, and exceptions come directly from upstream.
+
+This library's functionality has been substantially reduced because similar
+functionality is now available in upstream `pulsar-client`, including its
+[`pulsar.asyncio` API](https://github.com/apache/pulsar-client-python/blob/v3.13.0/pulsar/asyncio.py).
+The library now provides only `coroutine_listener`, which adapts async message
+handlers for upstream's synchronous subscription API.
 
 ## Installation
 
+Requires Python 3.10–3.14 and `pulsar-client>=3.13.0`. Native wheel platform
+requirements follow [upstream](https://github.com/apache/pulsar-client-python/tree/v3.13.0).
+
 ```shell
-$ pip install pulsar-asyncio-client
+pip install pulsar-asyncio-client
 ```
 
 ## Usage
 
+Wrap an async handler with `coroutine_listener` and pass it to the synchronous
+upstream client's subscription. The adapter captures the running event loop and
+schedules a separate task for each message received on Pulsar's native threads.
+
 ```python
 import asyncio
-import pulsar_asyncio
 
-PULSAR_URL = 'pulsar://localhost:6650'
-PULSAR_TOPIC = 'non-persistent://public/default/my-topic'
-PULSAR_SUBSCRIPTION = 'my-sub'
+import pulsar
+from pulsar.asyncio import Client as AsyncClient
 
-async def handle_message_async(consumer, message):
-    message_text = message.data().decode('utf-8')
-    print(f"Started asynchronously handling message: {message_text}")
-    await asyncio.sleep(0.1)
-    print(f"Finished asynchronously handling message: {message_text}")
-    consumer.acknowledge(message)
+from pulsar_asyncio import coroutine_listener
+
 
 async def main():
-    # Init Pulsar client
-    client = pulsar_asyncio.Client(PULSAR_URL)
-    
-    # Start a consumer with an async message listener
-    consumer = client.subscribe(
-        PULSAR_TOPIC,
-        subscription_name=PULSAR_SUBSCRIPTION,
-        message_listener=handle_message_async
-    )
+    topic = "persistent://public/default/my-topic"
+    subscriber = pulsar.Client("pulsar://localhost:6650")
+    publisher = AsyncClient("pulsar://localhost:6650")
+    received = asyncio.Event()
+    consumer = None
 
-    # Asynchronously publish some messages
-    producer = await client.create_producer(PULSAR_TOPIC)
-    for i in range(10):
-        message_text = f"My Message #{i}"
-        print(f"About to asynchronously publish message: {message_text}")
-        await producer.send(message_text.encode('utf-8'))
+    async def handle_message(consumer, message):
+        print(message.data().decode("utf-8"))
+        await asyncio.sleep(0.1)
+        consumer.acknowledge(message)
+        received.set()
 
-    # Allow some time for all messages to be consumed
-    await asyncio.sleep(1)
+    try:
+        consumer = await asyncio.to_thread(
+            subscriber.subscribe,
+            topic,
+            subscription_name="my-sub",
+            message_listener=coroutine_listener(handle_message),
+        )
+        producer = await publisher.create_producer(topic)
+        await producer.send(b"Hello from upstream asyncio")
+        await asyncio.wait_for(received.wait(), timeout=10)
+    finally:
+        if consumer is not None:
+            await asyncio.to_thread(consumer.close)
+        await asyncio.to_thread(subscriber.close)
+        await publisher.close()
 
-    # Stop consumer
-    consumer.close()
-    
-    # Stop client
-    await client.close()
 
-if __name__ == '__main__':
-    asyncio.run(main())
+asyncio.run(main())
 ```
+
+`subscribe()` and consumer methods retain upstream's synchronous behavior. For
+potentially blocking operations, use `asyncio.to_thread`. Asynchronous publishing
+uses the separate upstream `pulsar.asyncio.Client`; its producer batching defaults
+and exception types apply.
+
+To create the adapter outside the event loop's thread, pass
+`coroutine_listener(handle_message, loop=event_loop)` explicitly. Keep that loop
+running while consuming messages. Close the consumer and finish any in-flight
+handlers before closing the loop. Callbacks arriving after loop closure are
+ignored and are not acknowledged.
+
+Handlers run concurrently, so completion order is not guaranteed. Each handler
+must acknowledge its message and handle application errors. Unhandled exceptions
+are reported through asyncio's exception handler; the adapter does not retry or
+acknowledge failed handlers.
+
+## Migration
+
+The library now exports only `coroutine_listener`. Replace the former
+`pulsar_asyncio.Client.subscribe(message_listener=handler)` with
+`pulsar.Client.subscribe(message_listener=coroutine_listener(handler))` on an
+upstream client instance. Use `pulsar.asyncio.Client` for asynchronous producers,
+consumers, and readers, and `pulsar.asyncio.PulsarException` for its errors.
 
 ## Development
 
-Install the development dependencies with [PDM](https://pdm-project.org/):
+Install development dependencies with [PDM](https://pdm-project.org/):
 
 ```shell
-pdm install
-```
-
-Run lint and formatting checks:
-
-```shell
+pdm install -G test -G lint
 pdm run lint
+pdm run lint-fix
+pdm run test
 ```
 
-Apply automatic lint fixes and format the code:
+Run broker integration tests with Pulsar listening at `localhost:6650`:
 
 ```shell
-pdm run lint-fix
+pdm run test-integration
 ```
 
-[Ruff](https://docs.astral.sh/ruff/) checks Python errors, imports, common bug
-patterns, and Python 3.8-compatible modernization, and enforces consistent
-formatting. CI runs the same checks on pushes and pull requests. The generated
-`pulsar_asyncio/version.py` file is excluded.
+CI runs unit tests on Python 3.10–3.14 and integration tests against a Pulsar
+broker. [Ruff](https://docs.astral.sh/ruff/) checks lint and formatting. The
+generated `pulsar_asyncio/version.py` file is excluded.

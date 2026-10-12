@@ -1,14 +1,14 @@
 [project]
 name = "pulsar-asyncio-client"
-description = "Wrapper for pulsar-client that publishes messages asynchronously and handles consumed messages in an asyncio event loop"
+description = "Coroutine message listeners for the Apache Pulsar Python client"
 authors = [
     {name = "Mark Parncutt", email = "me@markparncutt.com"},
 ]
 dynamic = ["version"]
 dependencies = [
-    "pulsar-client==3.5.0"
+    "pulsar-client>=3.13.0"
 ]
-requires-python = ">=3.8,<3.13"
+requires-python = ">=3.10,<3.15"
 readme = "README.md"
 license = {text = "MIT"}
 
@@ -32,9 +32,14 @@ lint = ["ruff>=0.14.0,<0.15"]
 [tool.pdm.scripts]
 lint = { composite = ["ruff check .", "ruff format --check ."] }
 lint-fix = { composite = ["ruff check --fix .", "ruff format ."] }
+test = "pytest -m 'not integration'"
+test-integration = "pytest -m integration"
+
+[tool.pytest.ini_options]
+markers = ["integration: requires a Pulsar broker at localhost:6650"]
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py310"
 line-length = 88
 extend-exclude = ["pulsar_asyncio/version.py"]
 
@@ -42,7 +47,3 @@ extend-exclude = ["pulsar_asyncio/version.py"]
 # Syntax/style errors, unused names, import sorting, common bugs, and
 # modernization compatible with the minimum supported Python version.
 select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
-
-[tool.ruff.lint.flake8-bugbear]
-# Match pulsar.Client's shared, stateless default schema instance.
-extend-immutable-calls = ["pulsar.schema.BytesSchema"]
