@@ -28,7 +28,19 @@ def _set_future_threadsafe(fut: asyncio.Future, result: _pulsar.Result, value: A
     fut.get_loop().call_soon_threadsafe(_set_future, fut, result, value)
 
 def _message_listener(loop, message_listener_coro, consumer, message):
-    loop.create_task(message_listener_coro(consumer, message), name=f"MessageListenerTask-{message.message_id()}")
+    # Pulsar invokes this callback from its internal (C++) thread, not the asyncio
+    # event loop thread. loop.create_task() is not thread-safe and does not wake the
+    # loop's selector, so scheduling it directly from here can leave the listener
+    # coroutine enqueued but never run (e.g. when the loop is otherwise idle). Hop onto
+    # the loop thread with call_soon_threadsafe (which wakes the loop) and create the
+    # task there, preserving the named-Task semantics and exception surfacing.
+    def _schedule():
+        loop.create_task(
+            message_listener_coro(consumer, message),
+            name=f"MessageListenerTask-{message.message_id()}",
+        )
+
+    loop.call_soon_threadsafe(_schedule)
 
 
 class PulsarException(BaseException):

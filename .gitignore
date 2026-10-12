@@ -7,4 +7,5 @@ docs/build/
 .venv/
 .idea/
 .pdm-python
+.python-version
 pulsar_asyncio/version.py
